@@ -1,4 +1,4 @@
-package com.rsmaxwell.diaries.request;
+package com.rsmaxwell.diaries.requestor;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
@@ -16,14 +16,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rsmaxwell.diaries.common.config.Config;
 import com.rsmaxwell.diaries.common.config.MqttConfig;
 import com.rsmaxwell.diaries.common.config.User;
+import com.rsmaxwell.diaries.request.state.State;
 import com.rsmaxwell.mqtt.rpc.common.Request;
 import com.rsmaxwell.mqtt.rpc.common.Response;
 import com.rsmaxwell.mqtt.rpc.common.Status;
-import com.rsmaxwell.mqtt.rpc.request.RemoteProcedureCall;
+import com.rsmaxwell.mqtt.rpc.requestor.RemoteProcedureCall;
+import com.rsmaxwell.mqtt.rpc.requestor.Token;
 
-public class RegisterRequest {
+public class QuitRequest {
 
-	private static final Logger log = LogManager.getLogger(RegisterRequest.class);
+	private static final Logger log = LogManager.getLogger(QuitRequest.class);
 
 	static final int qos = 0;
 	static final String clientID = "requester";
@@ -36,27 +38,15 @@ public class RegisterRequest {
 	}
 
 	public static void main(String[] args) throws Exception {
-		log.info("diaries Register Request");
+
+		State state = State.read();
+		log.info(String.format("state:\n%s", state.toJson()));
 
 		Option configOption = createOption("c", "config", "Configuration", "Configuration", true);
-		Option usernameOption = createOption("u", "username", "Username", "Username", true);
-		Option passwordOption = createOption("p", "password", "Password", "Password", true);
-		Option firstnameOption = createOption("f", "firstname", "Firstname", "First name", true);
-		Option lastnameOption = createOption("l", "lastname", "Lastname", "Last name", true);
-		Option knownasOption = createOption("l", "knownas", "Knownas", "Knownas", true);
-		Option emailOption = createOption("l", "email", "Email", "Email", true);
-		Option phoneOption = createOption("l", "phone", "Phone", "Phone", true);
 
 		// @formatter:off
 		Options options = new Options();
-		options.addOption(configOption)
-		       .addOption(usernameOption)
-			   .addOption(passwordOption)
-		       .addOption(firstnameOption)
-		       .addOption(lastnameOption)
-		       .addOption(knownasOption)
-		       .addOption(emailOption)
-		       .addOption(phoneOption);
+		options.addOption(configOption);
 		// @formatter:on
 
 		CommandLineParser commandLineParser = new DefaultParser();
@@ -68,38 +58,39 @@ public class RegisterRequest {
 		String server = mqtt.getServer();
 		User user = mqtt.getUser();
 
-		// Connect
+		MqttClientPersistence persistence = new MqttDefaultFilePersistence();
+		MqttAsyncClient client = new MqttAsyncClient(server, clientID, persistence);
 		MqttConnectionOptions connOpts = new MqttConnectionOptions();
 		connOpts.setUserName(user.getUsername());
 		connOpts.setPassword(user.getPassword().getBytes());
 
-		MqttClientPersistence persistence = new MqttDefaultFilePersistence();
-		MqttAsyncClient client = new MqttAsyncClient(server, clientID, persistence);
+		// Make an RPC instance
 		RemoteProcedureCall rpc = new RemoteProcedureCall(client, String.format("response/%s", clientID));
 
+		// Connect
 		log.debug(String.format("Connecting to broker: %s as '%s'", server, clientID));
 		client.connect(connOpts).waitForCompletion();
+		log.debug(String.format("Client %s connected", clientID));
+
+		// Subscribe to the responseTopic
 		rpc.subscribeToResponseTopic();
 
 		// Make a request
-		Request request = new Request("register");
-		request.put("username", commandLine.getOptionValue("username"));
-		request.put("password", commandLine.getOptionValue("password"));
-		request.put("firstname", commandLine.getOptionValue("firstname"));
-		request.put("lastname", commandLine.getOptionValue("lastname"));
-		request.put("knownas", commandLine.getOptionValue("knownas"));
-		request.put("email", commandLine.getOptionValue("email"));
-		request.put("phone", commandLine.getOptionValue("phone"));
+		Request request = new Request("quit");
+		request.put("accessToken", state.getAccessToken());
+		request.put("quit", true);
 
-		// Send the request as a JSON string
+		// Send the request as a json string
 		byte[] bytes = mapper.writeValueAsBytes(request);
-		Response response = rpc.request(requestTopic, bytes).waitForResponse();
+		Token token = rpc.request(requestTopic, bytes);
+
+		// Wait for the response to arrive
+		Response response = token.waitForResponse();
 		Status status = response.getStatus();
 
 		// Handle the response
 		if (status.isOk()) {
-			Long id = (Long) response.getPayload();
-			log.info(String.format("User Registered: '%s', id: %d", user.getUsername(), id));
+			log.info("Responder is Quitting");
 		} else {
 			log.info(String.format("status: %s", status.toString()));
 		}
@@ -107,6 +98,6 @@ public class RegisterRequest {
 		// Disconnect
 		client.disconnect().waitForCompletion();
 		log.debug(String.format("Client %s disconnected", clientID));
-		log.info("Success");
+		log.debug("exiting");
 	}
 }

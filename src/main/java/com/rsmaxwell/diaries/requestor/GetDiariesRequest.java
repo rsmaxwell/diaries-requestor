@@ -1,4 +1,8 @@
-package com.rsmaxwell.diaries.request;
+package com.rsmaxwell.diaries.requestor;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
@@ -12,20 +16,21 @@ import org.eclipse.paho.mqttv5.client.MqttClientPersistence;
 import org.eclipse.paho.mqttv5.client.MqttConnectionOptions;
 import org.eclipse.paho.mqttv5.client.persist.MqttDefaultFilePersistence;
 
-import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rsmaxwell.diaries.common.config.Config;
 import com.rsmaxwell.diaries.common.config.MqttConfig;
 import com.rsmaxwell.diaries.common.config.User;
-import com.rsmaxwell.diaries.common.response.SigninReply;
+import com.rsmaxwell.diaries.request.model.Diary;
+import com.rsmaxwell.diaries.request.state.State;
 import com.rsmaxwell.mqtt.rpc.common.Request;
 import com.rsmaxwell.mqtt.rpc.common.Response;
 import com.rsmaxwell.mqtt.rpc.common.Status;
-import com.rsmaxwell.mqtt.rpc.request.RemoteProcedureCall;
+import com.rsmaxwell.mqtt.rpc.requestor.RemoteProcedureCall;
+import com.rsmaxwell.mqtt.rpc.requestor.Token;
 
-public class SignInRequest {
+public class GetDiariesRequest {
 
-	private static final Logger log = LogManager.getLogger(SignInRequest.class);
+	private static final Logger log = LogManager.getLogger(GetDiariesRequest.class);
 
 	static final int qos = 0;
 	static final String clientID = "requester";
@@ -39,15 +44,14 @@ public class SignInRequest {
 
 	public static void main(String[] args) throws Exception {
 
+		State state = State.read();
+		log.info(String.format("state:\n%s", state.toJson()));
+
 		Option configOption = createOption("c", "config", "Configuration", "Configuration", true);
-		Option usernameOption = createOption("u", "username", "Username", "Username", true);
-		Option passwordOption = createOption("p", "password", "Password", "Password", true);
 
 		// @formatter:off
 		Options options = new Options();
-		options.addOption(configOption)
-	           .addOption(usernameOption)
-			   .addOption(passwordOption);
+		options.addOption(configOption);
 		// @formatter:on
 
 		CommandLineParser commandLineParser = new DefaultParser();
@@ -59,52 +63,65 @@ public class SignInRequest {
 		String server = mqtt.getServer();
 		User user = mqtt.getUser();
 
-		// Connect
+		MqttClientPersistence persistence = new MqttDefaultFilePersistence();
+		MqttAsyncClient client = new MqttAsyncClient(server, clientID, persistence);
 		MqttConnectionOptions connOpts = new MqttConnectionOptions();
 		connOpts.setUserName(user.getUsername());
 		connOpts.setPassword(user.getPassword().getBytes());
 
-		MqttClientPersistence persistence = new MqttDefaultFilePersistence();
-		MqttAsyncClient client = new MqttAsyncClient(server, clientID, persistence);
+		// Make an RPC instance
 		RemoteProcedureCall rpc = new RemoteProcedureCall(client, String.format("response/%s", clientID));
 
+		// Connect
 		log.debug(String.format("Connecting to broker: %s as '%s'", server, clientID));
 		client.connect(connOpts).waitForCompletion();
+		log.debug(String.format("Client %s connected", clientID));
+
+		// Subscribe to the responseTopic
 		rpc.subscribeToResponseTopic();
 
-		// Make a request
-		Request request = new Request("signin");
-		request.put("username", commandLine.getOptionValue("username"));
-		request.put("password", commandLine.getOptionValue("password"));
+		List<Diary> diaries = new ArrayList<Diary>();
 
-		// Send the request as a JSON string
+		// Make a request
+		Request request = new Request("getDiaries");
+		request.put("accessToken", state.getAccessToken());
+
+		// Send the request as a json string
 		byte[] bytes = mapper.writeValueAsBytes(request);
-		Response response = rpc.request(requestTopic, bytes).waitForResponse();
+		Token token = rpc.request(requestTopic, bytes);
+
+		// Wait for the response to arrive
+		Response response = token.waitForResponse();
 		Status status = response.getStatus();
 
 		// Handle the response
-		if (!status.isOk()) {
-			log.info(String.format("status %s", status.toString()));
-		} else {
-			log.info(String.format("'%s' is signed-in", user.getUsername()));
-
-			String json = (String) response.getPayload();
-			SigninReply payload = null;
-			try {
-				payload = mapper.readValue(json, SigninReply.class);
-			} catch (JsonMappingException e) {
-				log.info(e.getMessage());
+		if (response.isOk()) {
+			Object result = response.getPayload();
+			if (!(result instanceof List<?>)) {
+				throw new Exception(String.format("Unexpected type: %s", result.getClass().getSimpleName()));
 			}
 
-			String accessToken = payload.getAccessToken();
-			String refreshToken = payload.getRefreshToken();
+			ArrayList<?> list = (ArrayList<?>) result;
+			for (Object item : list) {
 
-			log.info(String.format("accessToken:  %s", accessToken));
-			log.info(String.format("refreshToken: %s", refreshToken));
-			log.info("Success");
+				if (!(item instanceof Map)) {
+					throw new Exception(String.format("Unexpected type: %s", item.getClass().getSimpleName()));
+				}
+				Map<?, ?> map = (Map<?, ?>) item;
+				Diary d = new Diary(map);
+				diaries.add(d);
+			}
+
+			String json = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(diaries);
+
+			log.info(String.format("List of Diaries:\n%s", json));
+		} else {
+			log.info(String.format("status: %s", status.toString()));
 		}
 
 		// Disconnect
 		client.disconnect().waitForCompletion();
+		log.debug(String.format("Client %s disconnected", clientID));
+		log.debug("exiting");
 	}
 }

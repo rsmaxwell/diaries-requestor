@@ -1,4 +1,4 @@
-package com.rsmaxwell.diaries.request;
+package com.rsmaxwell.diaries.requestor;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -26,8 +26,8 @@ import com.rsmaxwell.diaries.request.state.State;
 import com.rsmaxwell.mqtt.rpc.common.Request;
 import com.rsmaxwell.mqtt.rpc.common.Response;
 import com.rsmaxwell.mqtt.rpc.common.Status;
-import com.rsmaxwell.mqtt.rpc.request.RemoteProcedureCall;
-import com.rsmaxwell.mqtt.rpc.request.Token;
+import com.rsmaxwell.mqtt.rpc.requestor.RemoteProcedureCall;
+import com.rsmaxwell.mqtt.rpc.requestor.Token;
 
 public class GetPagesRequest {
 

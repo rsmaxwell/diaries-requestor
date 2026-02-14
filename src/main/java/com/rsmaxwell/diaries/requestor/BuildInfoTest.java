@@ -1,4 +1,4 @@
-package com.rsmaxwell.diaries.request;
+package com.rsmaxwell.diaries.requestor;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -11,7 +11,7 @@ public class BuildInfoTest {
 
 		List<IBuildInfo> infos = new ArrayList<IBuildInfo>();
 		infos.add(new com.rsmaxwell.mqtt.rpc.common.buildinfo.BuildInfo());
-		infos.add(new com.rsmaxwell.mqtt.rpc.request.buildinfo.BuildInfo());
+		infos.add(new com.rsmaxwell.mqtt.rpc.requestor.buildinfo.BuildInfo());
 
 		for (IBuildInfo info : infos) {
 			info.printAll();

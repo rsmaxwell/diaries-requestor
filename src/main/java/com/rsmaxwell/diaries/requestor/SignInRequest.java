@@ -1,4 +1,4 @@
-package com.rsmaxwell.diaries.request;
+package com.rsmaxwell.diaries.requestor;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
@@ -12,21 +12,24 @@ import org.eclipse.paho.mqttv5.client.MqttClientPersistence;
 import org.eclipse.paho.mqttv5.client.MqttConnectionOptions;
 import org.eclipse.paho.mqttv5.client.persist.MqttDefaultFilePersistence;
 
+import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rsmaxwell.diaries.common.config.Config;
 import com.rsmaxwell.diaries.common.config.MqttConfig;
 import com.rsmaxwell.diaries.common.config.User;
+import com.rsmaxwell.diaries.common.response.SigninReply;
 import com.rsmaxwell.mqtt.rpc.common.Request;
 import com.rsmaxwell.mqtt.rpc.common.Response;
 import com.rsmaxwell.mqtt.rpc.common.Status;
-import com.rsmaxwell.mqtt.rpc.request.RemoteProcedureCall;
-import com.rsmaxwell.mqtt.rpc.request.Token;
+import com.rsmaxwell.mqtt.rpc.requestor.RemoteProcedureCall;
 
-public class CalculatorRequest {
+public class SignInRequest {
 
-	private static final Logger log = LogManager.getLogger(CalculatorRequest.class);
+	private static final Logger log = LogManager.getLogger(SignInRequest.class);
 
-	static int qos = 0;
+	static final int qos = 0;
+	static final String clientID = "requester";
+	static final String requestTopic = "request";
 
 	static private ObjectMapper mapper = new ObjectMapper();
 
@@ -37,23 +40,18 @@ public class CalculatorRequest {
 	public static void main(String[] args) throws Exception {
 
 		Option configOption = createOption("c", "config", "Configuration", "Configuration", true);
-		Option operationOption = createOption("o", "operation", "Operation", "Operation ( mul/add/sub/div )", true);
-		Option param1Option = createOption("a", "param1", "Param1", "Parameter 1", true);
-		Option param2Option = createOption("b", "param2", "Param2", "Parameter 2", true);
+		Option usernameOption = createOption("u", "username", "Username", "Username", true);
+		Option passwordOption = createOption("p", "password", "Password", "Password", true);
 
 		// @formatter:off
 		Options options = new Options();
 		options.addOption(configOption)
-			   .addOption(operationOption)
-			   .addOption(param1Option)
-			   .addOption(param2Option);
+	           .addOption(usernameOption)
+			   .addOption(passwordOption);
 		// @formatter:on
 
 		CommandLineParser commandLineParser = new DefaultParser();
 		CommandLine commandLine = commandLineParser.parse(options, args);
-		String operation = commandLine.getOptionValue(operationOption);
-		String A = commandLine.getOptionValue(param1Option);
-		String B = commandLine.getOptionValue(param2Option);
 
 		String filename = commandLine.getOptionValue("config");
 		Config config = Config.read(filename);
@@ -61,54 +59,52 @@ public class CalculatorRequest {
 		String server = mqtt.getServer();
 		User user = mqtt.getUser();
 
-		int param1 = Integer.parseInt(A);
-		int param2 = Integer.parseInt(B);
-
-		String clientID = "requester";
-		String requestTopic = "request";
-
-		MqttClientPersistence persistence = new MqttDefaultFilePersistence();
-		MqttAsyncClient client = new MqttAsyncClient(server, clientID, persistence);
+		// Connect
 		MqttConnectionOptions connOpts = new MqttConnectionOptions();
 		connOpts.setUserName(user.getUsername());
 		connOpts.setPassword(user.getPassword().getBytes());
 
-		// Make an RPC instance
+		MqttClientPersistence persistence = new MqttDefaultFilePersistence();
+		MqttAsyncClient client = new MqttAsyncClient(server, clientID, persistence);
 		RemoteProcedureCall rpc = new RemoteProcedureCall(client, String.format("response/%s", clientID));
 
-		// Connect
 		log.debug(String.format("Connecting to broker: %s as '%s'", server, clientID));
 		client.connect(connOpts).waitForCompletion();
-		log.debug(String.format("Client %s connected", clientID));
-
-		// Subscribe to the responseTopic
 		rpc.subscribeToResponseTopic();
 
 		// Make a request
-		Request request = new Request("calculator");
-		request.put("operation", operation);
-		request.put("param1", param1);
-		request.put("param2", param2);
+		Request request = new Request("signin");
+		request.put("username", commandLine.getOptionValue("username"));
+		request.put("password", commandLine.getOptionValue("password"));
 
-		// Send the request as a json string
+		// Send the request as a JSON string
 		byte[] bytes = mapper.writeValueAsBytes(request);
-		Token token = rpc.request(requestTopic, bytes);
-
-		// Wait for the response to arrive
-		Response response = token.waitForResponse();
+		Response response = rpc.request(requestTopic, bytes).waitForResponse();
 		Status status = response.getStatus();
 
 		// Handle the response
-		if (status.isOk()) {
-			Integer result = (Integer) response.getPayload();
-			log.info(String.format("payload: %d", result));
+		if (!status.isOk()) {
+			log.info(String.format("status %s", status.toString()));
 		} else {
-			log.info(String.format("status: %s", status.toString()));
+			log.info(String.format("'%s' is signed-in", user.getUsername()));
+
+			String json = (String) response.getPayload();
+			SigninReply payload = null;
+			try {
+				payload = mapper.readValue(json, SigninReply.class);
+			} catch (JsonMappingException e) {
+				log.info(e.getMessage());
+			}
+
+			String accessToken = payload.getAccessToken();
+			String refreshToken = payload.getRefreshToken();
+
+			log.info(String.format("accessToken:  %s", accessToken));
+			log.info(String.format("refreshToken: %s", refreshToken));
+			log.info("Success");
 		}
 
 		// Disconnect
 		client.disconnect().waitForCompletion();
-		log.debug(String.format("Client %s disconnected", clientID));
-		log.debug("exiting");
 	}
 }

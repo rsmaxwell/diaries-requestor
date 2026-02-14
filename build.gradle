@@ -8,7 +8,7 @@ plugins {
 repositories {
     mavenCentral()
     maven {
-        url "https://pluto.rsmaxwell.co.uk/archiva/repository/releases"
+        url = "https://pluto.rsmaxwell.co.uk/archiva/repository/releases"
     }
 }
 
@@ -28,7 +28,7 @@ dependencies {
     implementation libs.org.eclipse.paho.mqttv5.client
     
     implementation libs.mqtt.rpc.common
-    implementation libs.mqtt.rpc.request
+    implementation libs.mqtt.rpc.requestor
     
     implementation project(':diaries-common')
 }

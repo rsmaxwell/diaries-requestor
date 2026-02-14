@@ -1,4 +1,4 @@
-package com.rsmaxwell.diaries.request;
+package com.rsmaxwell.diaries.requestor;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
@@ -16,20 +16,17 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rsmaxwell.diaries.common.config.Config;
 import com.rsmaxwell.diaries.common.config.MqttConfig;
 import com.rsmaxwell.diaries.common.config.User;
-import com.rsmaxwell.diaries.request.state.State;
 import com.rsmaxwell.mqtt.rpc.common.Request;
 import com.rsmaxwell.mqtt.rpc.common.Response;
 import com.rsmaxwell.mqtt.rpc.common.Status;
-import com.rsmaxwell.mqtt.rpc.request.RemoteProcedureCall;
-import com.rsmaxwell.mqtt.rpc.request.Token;
+import com.rsmaxwell.mqtt.rpc.requestor.RemoteProcedureCall;
+import com.rsmaxwell.mqtt.rpc.requestor.Token;
 
-public class QuitRequest {
+public class CalculatorRequest {
 
-	private static final Logger log = LogManager.getLogger(QuitRequest.class);
+	private static final Logger log = LogManager.getLogger(CalculatorRequest.class);
 
-	static final int qos = 0;
-	static final String clientID = "requester";
-	static final String requestTopic = "request";
+	static int qos = 0;
 
 	static private ObjectMapper mapper = new ObjectMapper();
 
@@ -39,24 +36,36 @@ public class QuitRequest {
 
 	public static void main(String[] args) throws Exception {
 
-		State state = State.read();
-		log.info(String.format("state:\n%s", state.toJson()));
-
 		Option configOption = createOption("c", "config", "Configuration", "Configuration", true);
+		Option operationOption = createOption("o", "operation", "Operation", "Operation ( mul/add/sub/div )", true);
+		Option param1Option = createOption("a", "param1", "Param1", "Parameter 1", true);
+		Option param2Option = createOption("b", "param2", "Param2", "Parameter 2", true);
 
 		// @formatter:off
 		Options options = new Options();
-		options.addOption(configOption);
+		options.addOption(configOption)
+			   .addOption(operationOption)
+			   .addOption(param1Option)
+			   .addOption(param2Option);
 		// @formatter:on
 
 		CommandLineParser commandLineParser = new DefaultParser();
 		CommandLine commandLine = commandLineParser.parse(options, args);
+		String operation = commandLine.getOptionValue(operationOption);
+		String A = commandLine.getOptionValue(param1Option);
+		String B = commandLine.getOptionValue(param2Option);
 
 		String filename = commandLine.getOptionValue("config");
 		Config config = Config.read(filename);
 		MqttConfig mqtt = config.getMqtt();
 		String server = mqtt.getServer();
 		User user = mqtt.getUser();
+
+		int param1 = Integer.parseInt(A);
+		int param2 = Integer.parseInt(B);
+
+		String clientID = "requester";
+		String requestTopic = "request";
 
 		MqttClientPersistence persistence = new MqttDefaultFilePersistence();
 		MqttAsyncClient client = new MqttAsyncClient(server, clientID, persistence);
@@ -76,9 +85,10 @@ public class QuitRequest {
 		rpc.subscribeToResponseTopic();
 
 		// Make a request
-		Request request = new Request("quit");
-		request.put("accessToken", state.getAccessToken());
-		request.put("quit", true);
+		Request request = new Request("calculator");
+		request.put("operation", operation);
+		request.put("param1", param1);
+		request.put("param2", param2);
 
 		// Send the request as a json string
 		byte[] bytes = mapper.writeValueAsBytes(request);
@@ -90,7 +100,8 @@ public class QuitRequest {
 
 		// Handle the response
 		if (status.isOk()) {
-			log.info("Responder is Quitting");
+			Integer result = (Integer) response.getPayload();
+			log.info(String.format("payload: %d", result));
 		} else {
 			log.info(String.format("status: %s", status.toString()));
 		}
